@@ -377,7 +377,12 @@ fn stdlib() -> HashMap<String, Value> {
     use Value::*;
 
     fn print(val: Value) -> Value {
-        println!("{:?}", val);
+        match val {
+            Str(s) => println!("{}", s),
+            Int(i) => println!("{}", i),
+            any => println!("{:?}", any),
+        }
+
         List(vec![])
     }
 
@@ -410,6 +415,8 @@ fn main() {
         eval(
             parser(expr_list).parse(
                 "
+print:\"Hello, world!\";
+
 $def do_thing a b
     + a b;
 $def (%) fn a (
