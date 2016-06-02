@@ -1,0 +1,7 @@
+[package]
+name = "polish-prefix-lang"
+version = "0.1.0"
+authors = ["Jack Fransham <moonfudgeman@hotmail.co.uk>"]
+
+[dependencies]
+combine = "*"
