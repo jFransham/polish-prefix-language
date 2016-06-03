@@ -132,6 +132,8 @@ fn unit<I: Stream<Item=char>>(input: State<I>) -> ParseResult<Expr, I> {
         parser(expr_list),
     );
 
+    let forced_new_expr = (char('\\'), parser(expr)).map(|(_, e)| e);
+
     let list = between(
         (char('['), spaces()),
         (spaces(), char(']')),
@@ -142,6 +144,7 @@ fn unit<I: Stream<Item=char>>(input: State<I>) -> ParseResult<Expr, I> {
     ).map(Expr::List);
 
     choice([
+        box forced_new_expr as Box<Parser<Output=_, Input=_>>,
         box fn_variable as Box<Parser<Output=_, Input=_>>,
         box block as Box<Parser<Output=_, Input=_>>,
         box list as Box<Parser<Output=_, Input=_>>,
@@ -155,17 +158,17 @@ fn unit<I: Stream<Item=char>>(input: State<I>) -> ParseResult<Expr, I> {
 
 fn fn_name<I: Stream<Item=char>>(input: State<I>) -> ParseResult<Expr, I> {
     choice([
-        box choice([
-            char('+'),
-            char('-'),
-            char('/'),
-            char('*'),
-            char('&'),
-            char('%'),
-            char('#'),
-        ]).map(
-            |e: char| Expr::Variable(e.to_string())
-        ) as Box<Parser<Output=_, Input=_>>,
+        box many1(
+            choice([
+                char('+'),
+                char('-'),
+                char('/'),
+                char('*'),
+                char('&'),
+                char('%'),
+                char('#'),
+            ])
+        ).map(Expr::Variable) as Box<Parser<Output=_, Input=_>>,
         box try(
             (
                 parser(unit),
@@ -180,9 +183,9 @@ fn fn_name<I: Stream<Item=char>>(input: State<I>) -> ParseResult<Expr, I> {
 fn expr<I: Stream<Item=char>>(input: State<I>) -> ParseResult<Expr, I> {
     let binary_func_call = (
         parser(fn_name),
-        spaces(),
+        (space(), spaces()),
         parser(expr),
-        spaces(),
+        (space(), spaces()),
         parser(expr)
     ).map(
         |(fun, _, left, _, right)|
@@ -227,27 +230,31 @@ fn eval_macro(macro_name: String, args: Vec<Expr>) -> Action {
 
             let mut iter = args.into_iter();
 
-            match (
-                iter.next(), iter.next(), iter.next(), iter.next(), iter.next()
-            ) {
-                (Some(Variable(n)), Some(val), None, None, None) =>
-                    DefineVariable(n, val),
+            match (iter.next(), iter.next(), iter.next()) {
                 (
-                    Some(Variable(n)),
-                    Some(Variable(arg)),
+                    Some(UnaryFnCall(box Variable(n), box Variable(arg))),
                     Some(val),
                     None,
-                    None
                 ) =>
                     DefineVariable(n, UnaryFn(arg, box val)),
                 (
-                    Some(Variable(n)),
-                    Some(Variable(arg_0)),
-                    Some(Variable(arg_1)),
+                    Some(
+                        BinaryFnCall(
+                            box Variable(n),
+                            box Variable(arg_0),
+                            box Variable(arg_1),
+                        )
+                    ),
                     Some(val),
                     None,
                 ) =>
                     DefineVariable(n, BinaryFn(arg_0, arg_1, box val)),
+                (
+                    Some(Variable(n)),
+                    Some(val),
+                    None,
+                ) =>
+                    DefineVariable(n, val),
                 _ => unimplemented!(),
             }
         },
@@ -380,6 +387,7 @@ fn stdlib() -> HashMap<String, Value> {
         match val {
             Str(s) => println!("{}", s),
             Int(i) => println!("{}", i),
+            List(list) => println!("{:?}", list),
             any => println!("{:?}", any),
         }
 
@@ -410,22 +418,23 @@ fn stdlib() -> HashMap<String, Value> {
 }
 
 fn main() {
+    use std::io::prelude::*;
+    use std::fs::File;
+
+    let mut f = File::open("test.pfx").unwrap();
+    let mut s = String::new();
+    f.read_to_string(&mut s).unwrap();
+
+    let program = parser(expr_list).parse(
+        &s as &str
+    ).expect("Syntax error").0;
+
+    println!("{:#?}", program);
+
     println!(
         "{:?}",
         eval(
-            parser(expr_list).parse(
-                "
-print:\"Hello, world!\";
-
-$def do_thing a b
-    + a b;
-$def (%) fn a (
-    print:fn;
-    fn:a
-);
-% (-) do_thing: 1 2
-"
-            ).expect("Syntax error").0,
+            program,
             &mut vec![stdlib()]
         )
     );

@@ -4,10 +4,10 @@ W/ hints of Lisp, to taste.
 
 There are just two kinds of function: unary and binary. To receive more
 arguments one must take a list. Unary functions are applied with no whitespace,
-binary functions are applied with whitespace. Macros are denoted by a $ and
+binary functions are applied with whitespace. Macros are denoted by a `$` and
 simply consume expressions until a matching closing brace or a `;`. Functions,
-by default, are a single punctuation character (this may change in the future),
-but variables can be used as functions by appending a `:` (no whitespace).
+are a string of punctuation characters, but other expressions can be used as
+functions by appending a `:` (no whitespace).
 
 Example:
 
