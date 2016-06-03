@@ -1,11 +1,13 @@
 #![feature(box_syntax)]
 #![feature(box_patterns)]
+#![feature(question_mark)]
 
 extern crate combine;
 
 use combine::*;
 use combine::primitives::Stream;
 use std::collections::HashMap;
+use std::fmt::{Display, Formatter};
 
 #[derive(Debug, Clone)]
 enum Value {
@@ -16,6 +18,38 @@ enum Value {
     BuiltinUnaryFn(fn(Value) -> Value),
     BuiltinBinaryFn(fn(Value, Value) -> Value),
     List(Vec<Value>),
+}
+
+impl Display for Value {
+    fn fmt(&self, f: &mut Formatter) -> Result<(), std::fmt::Error> {
+        use Value::*;
+
+        match *self {
+            Str(ref s) => write!(f, "{}", s),
+            Int(ref i) => write!(f, "{}", i),
+            List(ref list) => {
+                write!(f, "[")?;
+
+                let mut iter = list.into_iter();
+
+                if let Some(v) = iter.next() {
+                    write!(f, "{}", v)?;
+                }
+
+                for v in iter {
+                    write!(f, " {}", v)?;
+                }
+
+                write!(f, "]")?;
+
+                Ok(())
+            },
+            UnaryFn(..) => write!(f, "UnaryFn(..)"),
+            BinaryFn(..) => write!(f, "BinaryFn(..)"),
+            BuiltinUnaryFn(..) => write!(f, "BuiltinUnaryFn(..)"),
+            BuiltinBinaryFn(..) => write!(f, "BuiltinBinaryFn(..)"),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -384,13 +418,7 @@ fn stdlib() -> HashMap<String, Value> {
     use Value::*;
 
     fn print(val: Value) -> Value {
-        match val {
-            Str(s) => println!("{}", s),
-            Int(i) => println!("{}", i),
-            List(list) => println!("{:?}", list),
-            any => println!("{:?}", any),
-        }
-
+        println!("{}", val);
         List(vec![])
     }
 
@@ -429,13 +457,15 @@ fn main() {
         &s as &str
     ).expect("Syntax error").0;
 
-    println!("{:#?}", program);
+    let output = eval(
+        program,
+        &mut vec![stdlib()]
+    );
+
+    println!("");
 
     println!(
-        "{:?}",
-        eval(
-            program,
-            &mut vec![stdlib()]
-        )
+        "Output: {}",
+        output
     );
 }
