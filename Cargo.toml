@@ -5,3 +5,4 @@ authors = ["Jack Fransham <moonfudgeman@hotmail.co.uk>"]
 
 [dependencies]
 combine = "*"
+num-bigint = "*"
