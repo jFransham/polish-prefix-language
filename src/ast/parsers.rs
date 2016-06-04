@@ -126,10 +126,22 @@ fn unit<I: Stream<Item=char>>(input: State<I>) -> ParseResult<Expr, I> {
     let list = between(
         (char('['), spaces()),
         (spaces(), char(']')),
-        sep_by(
-            parser(expr),
-            (space(), spaces()),
-        ),
+        (
+            many(
+                try(
+                    (
+                        parser(expr),
+                        (space(), spaces()),
+                    )
+                ).map(|(e, _)| e)
+            ),
+            optional(
+                parser(expr)
+            ),
+        ).map(
+            |(v, o): (Vec<_>, Option<_>)|
+                v.into_iter().chain(o.into_iter()).collect()
+        )
     ).map(Expr::List);
 
     choice([
