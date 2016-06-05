@@ -14,12 +14,14 @@ Example:
 ```
 print:"Hello, world!";
 
-$def do_thing a b
+$def do_thing: a b
     + a b;
-$def (%) fn a (
+
+$def % fn a (
     print:fn;
     fn:a
 );
+
 % (-) do_thing: 1 2
 ```
 
@@ -27,7 +29,7 @@ Prints
 
 ```
 Hello, world!
-BuiltinUnaryFn(0x56233fb31d70)
+($fn a b {{builtin}})
 ```
 
 and outputs -3
