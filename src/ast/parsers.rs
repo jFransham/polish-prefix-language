@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use combine::*;
 use combine::primitives::Stream;
 use num_bigint::BigInt;
@@ -34,7 +36,10 @@ fn escape_char(c: char) -> char {
 
 fn identifier<I: Stream<Item=char>>(input: State<I>) -> ParseResult<String, I> {
     (
-        letter(),
+        choice([
+            box letter() as Box<Parser<Output=_, Input=_>>,
+            box char('_') as Box<Parser<Output=_, Input=_>>
+        ]),
         many(
             choice([
                 box alpha_num() as Box<Parser<Output=_, Input=_>>,
@@ -96,7 +101,7 @@ fn unit<I: Stream<Item=char>>(input: State<I>) -> ParseResult<Expr, I> {
         |d: String| Expr::Lit(
             Value::Int(
                 BigInt::from_str(&d).unwrap()
-            )
+            ).into()
         )
     );
 
@@ -105,7 +110,7 @@ fn unit<I: Stream<Item=char>>(input: State<I>) -> ParseResult<Expr, I> {
         parser(identifier)
     ).map(
         |(_, i): (_, String)| Value::Hash(hash!(i))
-    ).map(Expr::Lit);
+    ).map(Rc::new).map(Expr::Lit);
 
     let variable = parser(identifier).map(Expr::Variable);
 
@@ -153,6 +158,7 @@ fn unit<I: Stream<Item=char>>(input: State<I>) -> ParseResult<Expr, I> {
         box variable as Box<Parser<Output=_, Input=_>>,
         box parser(string_literal)
             .map(Value::Str)
+            .map(Rc::new)
             .map(Expr::Lit) as Box<Parser<Output=_, Input=_>>,
     ]).parse_lazy(input)
 }
@@ -217,13 +223,13 @@ fn expr<I: Stream<Item=char>>(input: State<I>) -> ParseResult<Expr, I> {
         parser(expr)
     ).map(
         |(fun, _, left, _, right)|
-            Expr::BinaryFnCall(box fun, box left, box right)
+            Expr::BinaryFnCall(fun.into(), box left, box right)
     );
 
     let unary_func_call = (
         parser(fn_name),
         parser(expr),
-    ).map(|(fun, param)| Expr::UnaryFnCall(box fun, box param));
+    ).map(|(fun, param)| Expr::UnaryFnCall(fun.into(), box param));
 
     choice([
         box parser(macro_call) as Box<Parser<Output=_, Input=_>>,

@@ -25,10 +25,172 @@ macro_rules! hash {
 macro_rules! val_true { () => { Value::Hash(hash!("t")) }; }
 macro_rules! val_false { () => { Value::Hash(hash!("f")) }; }
 
+// TODO: use this to walk up the scope list until reaching a function that
+//       matches the pattern.
+#[derive(Debug, Hash, PartialEq, Eq, Clone)]
+pub enum Pattern {
+    Unary(ArgPattern),
+    Binary(ArgPattern, ArgPattern),
+}
+
+// TODO: lit pattern
+// TODO: seperate this from function code? (maybe if this is seperate the
+//       function code can be simpler? Can scripts use $def to emulate argument
+//       deconstruction?)
+#[derive(Debug, Hash, PartialEq, Eq, Clone)]
+pub enum ArgPattern {
+    List(Vec<ArgPattern>, Option<Box<ArgPattern>>), // option is for ..rest
+    // Expr must return a function that takes a single argument and returns
+    // #f or #t (technically, anything that isn't #f evaluates to true, but
+    // bite me).
+    Pred(Rc<Expr>, Box<ArgPattern>),
+    Var(String),
+    Discard,
+}
+
+impl Pattern {
+    fn deconstruct(&self, value: Args, scope: Scope) -> Option<Scope> {
+        match *self {
+            Pattern::Unary(ref p) =>
+                if let Args::Unary(v) = value {
+                    p.deconstruct(v, scope)
+                } else {
+                    None
+                },
+            Pattern::Binary(ref p0, ref p1) =>
+                // TODO: Construct scopes seperately and then merge them
+                // so that $fn a a:b ... doesn't work (it'd be silly).
+                if let Args::Binary(v0, v1) = value {
+                    p0.deconstruct(v0, scope).and_then(
+                        |s| p1.deconstruct(v1, s)
+                    )
+                } else {
+                    None
+                },
+        }
+    }
+}
+
+impl ArgPattern {
+    fn deconstruct(&self, value: Rc<Value>, scope: Scope) -> Option<Scope> {
+        match *self {
+            ArgPattern::Var(ref v) => Some(scope.with_var(v, value)),
+            ArgPattern::List(ref vec, ref rest_pat) => {
+                if let Value::List(ref vals) = *value {
+                    if vals.len() < vec.len() { return None; }
+
+                    let (values, rest) = vals.split_at(vec.len());
+
+                    let val_scope = values.iter().zip(vec.iter()).fold(
+                        Some(scope),
+                        |scp, (val, pat)| scp.and_then(
+                            |s| pat.deconstruct(val.clone(), s.clone())
+                        )
+                    );
+
+                    if let Some(ref pat) = *rest_pat {
+                        val_scope.and_then(
+                            |scp| pat.deconstruct(
+                                Value::List(
+                                    rest.iter().cloned().collect()
+                                ).into(),
+                                scp
+                            )
+                        )
+                    } else if rest.is_empty() {
+                        val_scope
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            },
+            ArgPattern::Pred(ref p, ref pat) => {
+                if *eval(
+                    // TODO: Make this use Rc
+                    &Expr::UnaryFnCall(
+                        box p.as_ref().clone(),
+                        box Expr::Lit(value.clone())
+                    ), scope.clone()
+                ) == val_false!() {
+                    None
+                } else {
+                    pat.deconstruct(value, scope)
+                }
+            },
+            ArgPattern::Discard => Some(scope),
+        }
+    }
+
+    fn from_expr(expr: &Expr) -> Option<Self> {
+        use ast::Expr::*;
+
+        match *expr {
+            UnaryFnCall(ref func, ref arg) => ArgPattern::from_expr(arg).map(
+                |a| ArgPattern::Pred(
+                    Rc::new((**func).clone()),
+                    box a
+                )
+            ),
+            Variable(ref name) =>
+                if name == "_" {
+                    Some(ArgPattern::Discard)
+                } else {
+                    Some(ArgPattern::Var(name.clone()))
+                },
+            List(ref exprs) => if exprs.is_empty() {
+                Some(ArgPattern::List(vec![], None))
+            } else {
+                let last_index = exprs.len() - 1;
+
+                let pat_slice = &exprs[..last_index];
+                let last = &exprs[last_index];
+
+                pat_slice.iter().map(ArgPattern::from_expr).fold(
+                    Some(vec![]),
+                    |total, current| match (total, current) {
+                        (Some(mut tot), Some(curr)) => {
+                            tot.push(curr);
+                            Some(tot)
+                        },
+                        _ => None,
+                    }
+                ).and_then(
+                    |mut out| match *last {
+                        UnaryFnCall(box Variable(ref fun), ref pat_expr)
+                            if fun == ".." => ArgPattern::from_expr(
+                                pat_expr
+                            ).map(
+                                |pat| ArgPattern::List(
+                                    out, Some(box pat)
+                                )
+                            ),
+                        ref any => ArgPattern::from_expr(any).map(
+                            |pat| {
+                                out.push(pat);
+
+                                ArgPattern::List(out, None)
+                            }
+                        ),
+                    }
+                )
+            },
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Hash, PartialEq, Eq, Clone)]
+pub enum Args {
+    Unary(Rc<Value>),
+    Binary(Rc<Value>, Rc<Value>),
+}
+
 enum Action {
     DefineVariable(String, Expr),
-    DefineRecUnary(String, String, Expr, bool),
-    DefineRecBinary(String, String, String, Expr, bool),
+    DefineRecUnary(String, Expr, Expr, bool),
+    DefineRecBinary(String, Expr, Expr, Expr, bool),
     Eval(Expr),
 }
 
@@ -40,7 +202,7 @@ fn eval_macro_def(args: Vec<Expr>, memo: bool) -> Action {
 
     match (iter.next(), iter.next(), iter.next()) {
         (
-            Some(UnaryFnCall(box Variable(n), box Variable(arg))),
+            Some(UnaryFnCall(box Variable(n), box arg)),
             Some(val),
             None,
         ) =>
@@ -54,8 +216,8 @@ fn eval_macro_def(args: Vec<Expr>, memo: bool) -> Action {
             Some(
                 BinaryFnCall(
                     box Variable(n),
-                    box Variable(arg_0),
-                    box Variable(arg_1),
+                    box arg_0,
+                    box arg_1,
                 )
             ),
             Some(val),
@@ -85,15 +247,32 @@ fn eval_macro_fn(args: Vec<Expr>, memo: bool) -> Action {
     let mut iter = args.into_iter();
 
     match (iter.next(), iter.next(), iter.next(), iter.next()) {
-        (Some(Variable(arg)), Some(val), None, None) =>
-            Eval(UnaryFn(arg, box val, memo)),
+        (Some(arg), Some(val), None, None) =>
+            Eval(
+                Func(
+                    Pattern::Unary(
+                        ArgPattern::from_expr(&arg).expect("Invalid pattern")
+                    ),
+                    box val,
+                    memo
+                )
+            ),
         (
-            Some(Variable(arg_0)),
-            Some(Variable(arg_1)),
+            Some(arg_0),
+            Some(arg_1),
             Some(val),
             None
         ) =>
-            Eval(BinaryFn(arg_0, arg_1, box val, memo)),
+            Eval(
+                Func(
+                    Pattern::Binary(
+                        ArgPattern::from_expr(&arg_0).expect("Invalid pattern"),
+                        ArgPattern::from_expr(&arg_1).expect("Invalid pattern"),
+                    ),
+                    box val,
+                    memo
+                )
+            ),
         _ => unimplemented!(),
     }
 }
@@ -117,7 +296,7 @@ fn eval_macro(macro_name: &str, args: Vec<Expr>) -> Action {
                         If(
                             box cond,
                             box then,
-                            box Lit(Value::List(vec![]))
+                            box Lit(Value::List(vec![]).into())
                         )
                     ),
                 (Some(cond), Some(then), Some(el), None) =>
@@ -126,6 +305,114 @@ fn eval_macro(macro_name: &str, args: Vec<Expr>) -> Action {
             }
         },
         _ => unimplemented!(),
+    }
+}
+
+fn eval_fn(
+    (pat, body, scope, memo): (&Pattern, &Expr, &MutableScope, &Memo),
+    params: Args
+) -> Option<Rc<Value>> {
+    if let Some(v) = memo.get(&params) {
+        Some(v)
+    } else if let Some(inner_scope) = pat.deconstruct(
+        params.clone(),
+        scope.borrow().clone()
+    ) {
+        let out = eval(body, inner_scope);
+
+        memo.insert(params, out.clone());
+
+        Some(out)
+    } else {
+        None
+    }
+}
+
+fn mutate_scope_with_action(
+    action: Action,
+    scope: &mut Scope
+) -> Rc<Value> {
+    use self::Action::*;
+
+    match action {
+        Eval(e) => eval(
+            &e,
+            scope.clone(),
+        ),
+        DefineVariable(name, var) => {
+            let val = eval(
+                &var,
+                scope.clone(),
+            );
+
+            *scope = scope.with_var(&name, val);
+
+            Rc::new(Value::List(vec![]))
+        },
+        DefineRecUnary(name, arg, var, memo) => {
+            let fun: Rc<_> = Value::Func(
+                Pattern::Unary(ArgPattern::from_expr(&arg).unwrap()),
+                Rc::new(var),
+                MutableScope::new(scope.clone()),
+                if memo {
+                    Memo::new()
+                } else {
+                    Memo::empty()
+                },
+            ).into();
+
+            *scope = scope.with_var(
+                &name,
+                fun.clone()
+            );
+
+            // Yeah I know, memory leaks, but overhauling
+            // the runtime to use a GC that can tell the
+            // difference between reachable and unreachable
+            // values is more work than it's currently worth
+            // TODO: fix this memory leak
+            if let Value::Func(
+                _,
+                _,
+                ref m_scope,
+                _
+            ) = *fun {
+                m_scope.set(scope.clone());
+            }
+
+            Rc::new(Value::List(vec![]))
+        },
+        DefineRecBinary(name, arg_0, arg_1, var, memo) => {
+            let fun: Rc<_> = Value::Func(
+                Pattern::Binary(
+                    ArgPattern::from_expr(&arg_0).unwrap(),
+                    ArgPattern::from_expr(&arg_1).unwrap(),
+                ),
+                Rc::new(var),
+                MutableScope::new(scope.clone()),
+                if memo {
+                    Memo::new()
+                } else {
+                    Memo::empty()
+                },
+            ).into();
+
+            *scope = scope.with_var(
+                &name,
+                fun.clone()
+            );
+
+            if let Value::Func(
+                _,
+                _,
+                ref m_scope,
+                _,
+            ) = *fun {
+                m_scope.set(scope.clone());
+            }
+
+            Rc::new(Value::List(vec![]))
+        },
     }
 }
 
@@ -146,81 +433,10 @@ pub fn eval(expression: &Expr, variables: Scope) -> Rc<Value> {
 
             for ex in exprs {
                 out = match *ex {
-                    Expr::Macro(ref name, ref args) =>
-                        match eval_macro(name, args.clone()) {
-                            Eval(e) => eval(
-                                &e,
-                                inner_scope.clone(),
-                            ),
-                            DefineVariable(name, var) => {
-                                let val = eval(
-                                    &var,
-                                    inner_scope.clone(),
-                                );
-
-                                inner_scope = inner_scope.with_var(&name, val);
-
-                                Rc::new(Value::List(vec![]))
-                            },
-                            DefineRecUnary(name, arg, var, memo) => {
-                                let fun: Rc<_> = Value::UnaryFn(
-                                    arg,
-                                    Rc::new(var),
-                                    MutableScope::new(inner_scope.clone()),
-                                    if memo {
-                                        Memo::new()
-                                    } else {
-                                        Memo::empty()
-                                    },
-                                ).into();
-
-                                inner_scope = inner_scope.with_var(
-                                    &name,
-                                    fun.clone()
-                                );
-
-                                if let Value::UnaryFn(
-                                    _,
-                                    _,
-                                    ref m_scope,
-                                    _
-                                ) = *fun {
-                                    m_scope.set(inner_scope.clone());
-                                }
-
-                                Rc::new(Value::List(vec![]))
-                            },
-                            DefineRecBinary(name, arg_0, arg_1, var, memo) => {
-                                let fun: Rc<_> = Value::BinaryFn(
-                                    arg_0,
-                                    arg_1,
-                                    Rc::new(var),
-                                    MutableScope::new(inner_scope.clone()),
-                                    if memo {
-                                        Memo::new()
-                                    } else {
-                                        Memo::empty()
-                                    },
-                                ).into();
-
-                                inner_scope = inner_scope.with_var(
-                                    &name,
-                                    fun.clone()
-                                );
-
-                                if let Value::BinaryFn(
-                                    _,
-                                    _,
-                                    _,
-                                    ref m_scope,
-                                    _,
-                                ) = *fun {
-                                    m_scope.set(inner_scope.clone());
-                                }
-
-                                Rc::new(Value::List(vec![]))
-                            },
-                        },
+                    Expr::Macro(ref name, ref args) => mutate_scope_with_action(
+                        eval_macro(name, args.clone()),
+                        &mut inner_scope,
+                    ),
                     ref any => eval(any, inner_scope.clone()),
                 };
             }
@@ -228,88 +444,82 @@ pub fn eval(expression: &Expr, variables: Scope) -> Rc<Value> {
             out
         },
         Expr::UnaryFnCall(ref exp, ref arg) => {
-            let func = eval(exp, variables.clone());
-            let parameter = eval(arg, variables.clone());
+            let param = eval(arg, variables.clone());
 
-            match *func {
-                Value::UnaryFn(
-                    ref param_name,
-                    ref exp,
-                    ref captured,
-                    ref memo,
-                ) => {
-                    if let Some(v) = memo.get(&parameter) {
-                        v
-                    } else {
-                        let inner_scope = captured.borrow().with_var(
-                            param_name,
-                            parameter.clone()
-                        );
+            let mut scope = variables;
 
-                        let out = eval(exp, inner_scope);
+            loop {
+                let func = eval(exp, scope.clone());
 
-                        memo.insert(parameter, out.clone());
-
-                        out
-                    }
-                },
-                Value::BuiltinUnaryFn(ref f) => f(parameter),
-                ref any => panic!("Expected unary fn, found {}.", any),
+                match *func {
+                    Value::Func(ref pat, ref exp, ref captured, ref memo) =>
+                        if let Some(val) = eval_fn(
+                            (pat, exp, captured, memo),
+                            Args::Unary(param.clone())
+                        ) {
+                            return val;
+                        } else {
+                            scope = scope.parent().expect(
+                                "Pattern not matched"
+                            );
+                        },
+                    Value::BuiltinUnaryFn(ref f) => return f(param.clone()),
+                    _ => scope = scope.parent().expect(
+                        "Pattern not matched"
+                    ),
+                }
             }
         },
         Expr::BinaryFnCall(ref exp, ref arg_0, ref arg_1) => {
-            let func = eval(exp, variables.clone());
             let params = (
                 eval(arg_0, variables.clone()),
                 eval(arg_1, variables.clone()),
             );
 
-            match *func {
-                Value::BinaryFn(
-                    ref param_name_0,
-                    ref param_name_1,
-                    ref exp,
-                    ref captured,
-                    ref memo,
-                ) => {
-                    if let Some(v) = memo.get(&params) {
-                        v
-                    } else {
-                        let inner_scope = captured.borrow()
-                            .with_var(param_name_0, params.0.clone())
-                            .with_var(param_name_1, params.1.clone());
+            let mut scope = variables;
 
-                        let out = eval(exp, inner_scope);
+            // TODO: This is super slow on a pattern miss, but in other
+            //       situations is as fast as normal (+- compiler
+            //       optimisations). How would I optimise this if I needed to?
+            // XXX: Number one would be continue if the function is the same --
+            //      would it be necessary to memoise patterns if I did this?
+            //      It's certainly simpler than adding memoisation to Rust-side
+            //      functions.
+            loop {
+                let func = eval(exp, scope.clone());
 
-                        memo.insert(params, out.clone());
-
-                        out
-                    }
-                },
-                Value::BuiltinBinaryFn(ref f) => f(params.0, params.1),
-                ref any => panic!("Expected binary fn, found {}.", any),
+                match *func {
+                    Value::Func(ref pat, ref exp, ref captured, ref memo) =>
+                        if let Some(val) = eval_fn(
+                            (pat, exp, captured, memo),
+                            Args::Binary(params.0.clone(), params.1.clone())
+                        ) {
+                            return val;
+                        } else {
+                            scope = scope.parent().expect(
+                                "Pattern not matched"
+                            );
+                        },
+                    Value::BuiltinBinaryFn(ref f) =>
+                        return f(params.0.clone(), params.1.clone()),
+                    _ => scope = scope.parent().expect(
+                        "Pattern not matched"
+                    ),
+                }
             }
         },
         Expr::If(ref cond, ref a, ref b) => {
             let c = eval(cond, variables.clone());
 
-            if val_true!() == *c {
-                eval(a, variables)
-            } else {
+            if *c == val_false!() {
                 eval(b, variables)
+            } else {
+                eval(a, variables)
             }
         },
-        Expr::UnaryFn(ref param_name, ref body, ref memo) =>
-            Value::UnaryFn(
-                param_name.clone(),
-                Rc::new(*body.clone()),
-                MutableScope::new(variables.clone()),
-                if *memo { Memo::new() } else { Memo::empty() },
-            ).into(),
-        Expr::BinaryFn(ref p_name_0, ref p_name_1, ref body, ref memo) =>
-            Value::BinaryFn(
-                p_name_0.clone(),
-                p_name_1.clone(),
+        Expr::Func(ref pat, ref body, ref memo) =>
+            Value::Func(
+                pat.clone(),
                 Rc::new(*body.clone()),
                 MutableScope::new(variables.clone()),
                 if *memo { Memo::new() } else { Memo::empty() },
@@ -344,11 +554,12 @@ pub fn stdlib() -> Scope {
     }
 
     make_is_fn!(is_str, Str(_));
+    make_is_fn!(is_list, List(_));
     make_is_fn!(is_int, Int(_));
     make_is_fn!(is_hash, Hash(_));
     make_is_fn!(
         is_fn,
-        UnaryFn(..) | BinaryFn(..) | BuiltinUnaryFn(..) | BuiltinBinaryFn(..)
+        Func(..) | BuiltinUnaryFn(..) | BuiltinBinaryFn(..)
     );
 
     fn print(val: Rc<Value>) -> Rc<Value> {
@@ -465,6 +676,7 @@ pub fn stdlib() -> Scope {
         .with_var("head", Value::BuiltinUnaryFn(head).into())
         .with_var("tail", Value::BuiltinUnaryFn(tail).into())
         .with_var("str?", Value::BuiltinUnaryFn(is_str).into())
+        .with_var("list?", Value::BuiltinUnaryFn(is_list).into())
         .with_var("int?", Value::BuiltinUnaryFn(is_int).into())
         .with_var("hash?", Value::BuiltinUnaryFn(is_hash).into())
         .with_var("fn?", Value::BuiltinUnaryFn(is_fn).into());

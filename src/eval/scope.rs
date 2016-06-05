@@ -55,6 +55,10 @@ impl Scope {
         self.0.get(name)
     }
 
+    pub fn parent(&self) -> Option<Scope> {
+        self.0.parent.clone()
+    }
+
     pub fn new_with_var(name: &str, value: Rc<Value>) -> Scope {
         Rc::new(
             OwnedScope {

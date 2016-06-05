@@ -6,6 +6,7 @@ use std::hash::{Hash, Hasher};
 use num_bigint::BigInt;
 
 use eval::scope::*;
+use eval::{Pattern, Args};
 use ast::Expr;
 
 macro_rules! hash {
@@ -21,12 +22,9 @@ macro_rules! hash {
 }
 
 #[derive(Debug, Clone)]
-pub struct Memo<T: Hash + Eq>(Option<RefCell<HashMap<T, Rc<Value>>>>);
+pub struct Memo(Option<RefCell<HashMap<Args, Rc<Value>>>>);
 
-pub type UnaryMemo = Memo<Rc<Value>>;
-pub type BinaryMemo = Memo<(Rc<Value>, Rc<Value>)>;
-
-impl<T: Hash + Eq> Memo<T> {
+impl Memo {
     pub fn new() -> Self {
         Memo(Some(RefCell::new(HashMap::new())))
     }
@@ -35,7 +33,7 @@ impl<T: Hash + Eq> Memo<T> {
         Memo(None)
     }
 
-    pub fn get(&self, value: &T) -> Option<Rc<Value>> {
+    pub fn get(&self, value: &Args) -> Option<Rc<Value>> {
         if let Some(ref refcell) = self.0 {
             (*refcell.borrow()).get(value).cloned()
         } else {
@@ -43,14 +41,14 @@ impl<T: Hash + Eq> Memo<T> {
         }
     }
 
-    pub fn insert(&self, input: T, output: Rc<Value>) {
+    pub fn insert(&self, input: Args, output: Rc<Value>) {
         if let Some(ref refcell) = self.0 {
             (*refcell.borrow_mut()).insert(input, output);
         }
     }
 }
 
-impl<T: Hash + Eq> Default for Memo<T> {
+impl Default for Memo {
     fn default() -> Self {
         Self::new()
     }
@@ -61,8 +59,7 @@ pub enum Value {
     Int(BigInt),
     Str(String),
     Hash(u64),
-    UnaryFn(String, Rc<Expr>, MutableScope, UnaryMemo),
-    BinaryFn(String, String, Rc<Expr>, MutableScope, BinaryMemo),
+    Func(Pattern, Rc<Expr>, MutableScope, Memo),
     BuiltinUnaryFn(fn(Rc<Value>) -> Rc<Value>),
     BuiltinBinaryFn(fn(Rc<Value>, Rc<Value>) -> Rc<Value>),
     List(Vec<Rc<Value>>),
@@ -76,14 +73,8 @@ impl Hash for Value {
             Int(ref a) => a.hash(hasher),
             Str(ref a) => a.hash(hasher),
             Hash(ref a) => a.hash(hasher),
-            UnaryFn(ref param, ref e, ref scope, _) => {
-                param.hash(hasher);
-                e.hash(hasher);
-                scope.hash(hasher);
-            },
-            BinaryFn(ref p0, ref p1, ref e, ref scope, _) => {
-                p0.hash(hasher);
-                p1.hash(hasher);
+            Func(ref pat, ref e, ref scope, _) => {
+                pat.hash(hasher);
                 e.hash(hasher);
                 scope.hash(hasher);
             },
@@ -103,18 +94,10 @@ impl PartialEq for Value {
             (&Str(ref a), &Str(ref b)) => a == b,
             (&Hash(ref a), &Hash(ref b)) => a == b,
             (
-                &UnaryFn(ref param_a, ref e_a, ref scope_a, _),
-                &UnaryFn(ref param_b, ref e_b, ref scope_b, _),
+                &Func(ref param_a, ref e_a, ref scope_a, _),
+                &Func(ref param_b, ref e_b, ref scope_b, _),
             ) =>
                 param_a == param_b && e_a == e_b && scope_a == scope_b,
-            (
-                &BinaryFn(ref p0_a, ref p1_a, ref e_a, ref scope_a, _),
-                &BinaryFn(ref p0_b, ref p1_b, ref e_b, ref scope_b, _),
-            ) =>
-                p0_a == p0_b &&
-                p1_a == p1_b &&
-                e_a == e_b &&
-                scope_a == scope_b,
             (&BuiltinUnaryFn(ref a), &BuiltinUnaryFn(ref b)) => a == b,
             (&BuiltinBinaryFn(ref a), &BuiltinBinaryFn(ref b)) => a == b,
             (&List(ref a), &List(ref b)) => a == b,
@@ -157,10 +140,8 @@ impl Display for Value {
                 } else {
                     write!(f, "#{{{}}}", h)
                 },
-            UnaryFn(ref arg, ref expr, _, _) =>
-                write!(f, "($fn {} {})", arg, expr),
-            BinaryFn(ref arg_0, ref arg_1, ref expr, _, _) =>
-                write!(f, "($fn {} {} {})", arg_0, arg_1, expr),
+            Func(..) =>
+                write!(f, "($fn ...)"),
             BuiltinUnaryFn(..) =>
                 write!(f, "($fn arg {{{{builtin}}}})"),
             BuiltinBinaryFn(..) =>

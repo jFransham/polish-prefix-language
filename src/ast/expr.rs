@@ -1,14 +1,22 @@
+use std::rc::Rc;
 use std::fmt::{self, Display, Formatter};
-use eval::Value;
+use eval::{Pattern, Value};
 
 #[derive(Hash, PartialEq, Eq, Debug, Clone)]
 pub enum Expr {
     UnaryFnCall(Box<Expr>, Box<Expr>),
     BinaryFnCall(Box<Expr>, Box<Expr>, Box<Expr>),
     If(Box<Expr>, Box<Expr>, Box<Expr>),
-    UnaryFn(String, Box<Expr>, bool),
-    BinaryFn(String, String, Box<Expr>, bool),
-    Lit(Value),
+    // bool = whether to memoise. Ideally in the future this would be
+    // implemented using $set and script-space macros, but neither is
+    // implemented yet, so we have this mildly rancid hack.
+    // TODO: unrancid this implementation
+    // XXX: Needs:
+    //      * script-space representation of AST (for macros).
+    //      * $set macro (needs to replace Scope's value: Rc<Value> with
+    //        value: RefCell<Rc<Value>>.
+    Func(Pattern, Box<Expr>, bool),
+    Lit(Rc<Value>),
     Variable(String),
     List(Vec<Expr>),
     Block(Vec<Expr>),
@@ -24,22 +32,11 @@ impl Display for Expr {
                 write!(f, "(({}):{})", func, arg),
             BinaryFnCall(ref func, ref arg_0, ref arg_1) =>
                 write!(f, "(({}): {} {})", func, arg_0, arg_1),
-            UnaryFn(ref arg, ref expr, ref memo) =>
+            Func(_, _, ref memo) =>
                 write!(
                     f,
-                    "($fn {}{} {})",
-                    if *memo { "#memo " } else { "" },
-                    arg,
-                    expr
-                ),
-            BinaryFn(ref arg_0, ref arg_1, ref expr, ref memo) =>
-                write!(
-                    f,
-                    "($fn {}{} {} {})",
-                    if *memo { "#memo " } else { "" },
-                    arg_0,
-                    arg_1,
-                    expr
+                    "($fn {}...)",
+                    if *memo { "#memo " } else { "" }
                 ),
             If(ref cond, ref then, ref el) =>
                 write!(f, "($if {} {} {})", cond, then, el),
