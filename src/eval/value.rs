@@ -9,18 +9,6 @@ use eval::scope::*;
 use eval::{Pattern, Args};
 use ast::Expr;
 
-macro_rules! hash {
-    ($e:expr) => {{
-        use std::hash::{SipHasher, Hash};
-
-        let mut hasher = SipHasher::new();
-
-        ($e).hash(&mut hasher);
-
-        hasher.finish()
-    }};
-}
-
 #[derive(Debug, Clone)]
 pub struct Memo(Option<RefCell<HashMap<Args, Rc<Value>>>>);
 
@@ -58,7 +46,7 @@ impl Default for Memo {
 pub enum Value {
     Int(BigInt),
     Str(String),
-    Hash(u64),
+    Hash(String),
     Mutable(RefCell<Rc<Value>>),
     Func(Pattern, Rc<Expr>, MutableScope, Memo),
     BuiltinFunc(fn(Args) -> Rc<Value>),
@@ -132,13 +120,7 @@ impl Display for Value {
                 Ok(())
             },
             Hash(ref h) =>
-                if *h == hash!("t") {
-                    write!(f, "#t")
-                } else if *h == hash!("f") {
-                    write!(f, "#f")
-                } else {
-                    write!(f, "#{{{}}}", h)
-                },
+                write!(f, "#{}", h),
             Func(..) =>
                 write!(f, "($fn ...)"),
             BuiltinFunc(..) =>

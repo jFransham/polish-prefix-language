@@ -4,18 +4,6 @@ use std::hash::{Hash, Hasher};
 
 use eval::Value;
 
-macro_rules! hash {
-    ($e:expr) => {{
-        use std::hash::{SipHasher, Hash, Hasher};
-
-        let mut hasher = SipHasher::new();
-
-        ($e).hash(&mut hasher);
-
-        hasher.finish()
-    }};
-}
-
 #[derive(Debug, Clone)]
 pub struct MutableScope(RefCell<Scope>);
 
@@ -51,7 +39,7 @@ impl Eq for MutableScope { }
 pub struct Scope(Rc<OwnedScope>);
 
 impl Scope {
-    pub fn get(&self, name: u64) -> Option<Rc<Value>> {
+    pub fn get(&self, name: &str) -> Option<Rc<Value>> {
         self.0.get(name)
     }
 
@@ -59,21 +47,21 @@ impl Scope {
         self.0.parent.clone()
     }
 
-    pub fn new_with_var(name: &str, value: Rc<Value>) -> Scope {
+    pub fn new_with_var(name: String, value: Rc<Value>) -> Scope {
         Rc::new(
             OwnedScope {
                 parent: None,
-                name: hash!(name),
+                name: name,
                 value: value,
             }
         ).into()
     }
 
-    pub fn with_var(&self, name: &str, value: Rc<Value>) -> Scope {
+    pub fn with_var(&self, name: String, value: Rc<Value>) -> Scope {
         Rc::new(
             OwnedScope {
                 parent: Some(self.clone()),
-                name: hash!(name),
+                name: name,
                 value: value,
             }
         ).into()
@@ -97,12 +85,12 @@ impl From<Rc<OwnedScope>> for Scope {
 #[derive(Debug, Clone)]
 struct OwnedScope {
     parent: Option<Scope>,
-    name: u64,
+    name: String,
     value: Rc<Value>,
 }
 
 impl OwnedScope {
-    pub fn get(&self, key: u64) -> Option<Rc<Value>> {
+    pub fn get(&self, key: &str) -> Option<Rc<Value>> {
         if self.name == key {
             Some(self.value.clone())
         } else {

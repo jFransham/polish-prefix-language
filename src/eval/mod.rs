@@ -10,20 +10,8 @@ use self::scope::MutableScope;
 pub use self::scope::Scope;
 pub use self::value::Value;
 
-macro_rules! hash {
-    ($e:expr) => {{
-        use std::hash::{SipHasher, Hash, Hasher};
-
-        let mut hasher = SipHasher::new();
-
-        ($e).hash(&mut hasher);
-
-        hasher.finish()
-    }};
-}
-
-macro_rules! val_true { () => { Value::Hash(hash!("t")) }; }
-macro_rules! val_false { () => { Value::Hash(hash!("f")) }; }
+macro_rules! val_true { () => { Value::Hash("t".into()) }; }
+macro_rules! val_false { () => { Value::Hash("f".into()) }; }
 
 // TODO: use this to walk up the scope list until reaching a function that
 //       matches the pattern.
@@ -74,7 +62,7 @@ impl Pattern {
 impl ArgPattern {
     fn deconstruct(&self, value: Rc<Value>, scope: Scope) -> Option<Scope> {
         match *self {
-            ArgPattern::Var(ref v) => Some(scope.with_var(v, value)),
+            ArgPattern::Var(ref v) => Some(scope.with_var(v.clone(), value)),
             ArgPattern::List(ref vec, ref rest_pat) => {
                 if let Value::List(ref vals) = *value {
                     if vals.len() < vec.len() { return None; }
@@ -345,7 +333,7 @@ fn mutate_scope_with_action(
                 scope.clone(),
             );
 
-            *scope = scope.with_var(&name, val);
+            *scope = scope.with_var(name, val);
 
             Rc::new(Value::List(vec![]))
         },
@@ -362,7 +350,7 @@ fn mutate_scope_with_action(
             ).into();
 
             *scope = scope.with_var(
-                &name,
+                name,
                 fun.clone()
             );
 
@@ -398,7 +386,7 @@ fn mutate_scope_with_action(
             ).into();
 
             *scope = scope.with_var(
-                &name,
+                name,
                 fun.clone()
             );
 
@@ -524,8 +512,11 @@ pub fn eval(expression: &Expr, variables: Scope) -> Rc<Value> {
                 MutableScope::new(variables.clone()),
                 if *memo { Memo::new() } else { Memo::empty() },
             ).into(),
-        Expr::Variable(ref name) => variables.get(hash!(name)).expect(
-            &format!("Cannot find variable {}", name)
+        Expr::Variable(ref name) => variables.get(name).expect(
+            &format!(
+                "Cannot find variable {} (this might be a result of a pattern failing to match)",
+                name
+            )
         ),
         Expr::List(ref exprs) => Value::List(
             exprs.iter().map(
@@ -716,21 +707,21 @@ pub fn stdlib() -> Scope {
         }
     }
 
-    Scope::new_with_var("print", Value::BuiltinFunc(print).into())
-        .with_var("=", Value::BuiltinFunc(eq).into())
-        .with_var("<=", Value::BuiltinFunc(less_or_eq).into())
-        .with_var("+", Value::BuiltinFunc(add).into())
-        .with_var("*", Value::BuiltinFunc(mul).into())
-        .with_var("/", Value::BuiltinFunc(div).into())
-        .with_var("%", Value::BuiltinFunc(modulo).into())
-        .with_var("cons", Value::BuiltinFunc(cons).into())
-        .with_var("set!", Value::BuiltinFunc(mutate).into())
-        .with_var("-", Value::BuiltinFunc(neg).into())
-        .with_var("!", Value::BuiltinFunc(inner).into())
-        .with_var("mut.", Value::BuiltinFunc(make_mutable).into())
-        .with_var("str?", Value::BuiltinFunc(is_str).into())
-        .with_var("list?", Value::BuiltinFunc(is_list).into())
-        .with_var("int?", Value::BuiltinFunc(is_int).into())
-        .with_var("hash?", Value::BuiltinFunc(is_hash).into())
-        .with_var("fn?", Value::BuiltinFunc(is_fn).into())
+    Scope::new_with_var("print".into(), Value::BuiltinFunc(print).into())
+        .with_var("=".into(), Value::BuiltinFunc(eq).into())
+        .with_var("<=".into(), Value::BuiltinFunc(less_or_eq).into())
+        .with_var("+".into(), Value::BuiltinFunc(add).into())
+        .with_var("*".into(), Value::BuiltinFunc(mul).into())
+        .with_var("/".into(), Value::BuiltinFunc(div).into())
+        .with_var("%".into(), Value::BuiltinFunc(modulo).into())
+        .with_var("cons".into(), Value::BuiltinFunc(cons).into())
+        .with_var("set!".into(), Value::BuiltinFunc(mutate).into())
+        .with_var("-".into(), Value::BuiltinFunc(neg).into())
+        .with_var("!".into(), Value::BuiltinFunc(inner).into())
+        .with_var("mut.".into(), Value::BuiltinFunc(make_mutable).into())
+        .with_var("str?".into(), Value::BuiltinFunc(is_str).into())
+        .with_var("list?".into(), Value::BuiltinFunc(is_list).into())
+        .with_var("int?".into(), Value::BuiltinFunc(is_int).into())
+        .with_var("hash?".into(), Value::BuiltinFunc(is_hash).into())
+        .with_var("fn?".into(), Value::BuiltinFunc(is_fn).into())
 }

@@ -7,18 +7,6 @@ use num_bigint::BigInt;
 use ast::expr::*;
 use eval::Value;
 
-macro_rules! hash {
-    ($e:expr) => {{
-        use std::hash::{SipHasher, Hash, Hasher};
-
-        let mut hasher = SipHasher::new();
-
-        ($e).hash(&mut hasher);
-
-        hasher.finish()
-    }};
-}
-
 fn escape_char(c: char) -> char {
     match c {
         '\'' => '\'',
@@ -109,7 +97,7 @@ fn unit<I: Stream<Item=char>>(input: State<I>) -> ParseResult<Expr, I> {
         char::<I>('#'),
         parser(identifier)
     ).map(
-        |(_, i): (_, String)| Value::Hash(hash!(i))
+        |(_, i): (_, String)| Value::Hash(i)
     ).map(Rc::new).map(Expr::Lit);
 
     let variable = parser(identifier).map(Expr::Variable);
