@@ -61,8 +61,7 @@ pub enum Value {
     Hash(u64),
     Mutable(RefCell<Rc<Value>>),
     Func(Pattern, Rc<Expr>, MutableScope, Memo),
-    BuiltinUnaryFn(fn(Rc<Value>) -> Rc<Value>),
-    BuiltinBinaryFn(fn(Rc<Value>, Rc<Value>) -> Rc<Value>),
+    BuiltinFunc(fn(Args) -> Rc<Value>),
     List(Vec<Rc<Value>>),
 }
 
@@ -79,8 +78,7 @@ impl Hash for Value {
                 e.hash(hasher);
                 scope.hash(hasher);
             },
-            BuiltinUnaryFn(ref a) => a.hash(hasher),
-            BuiltinBinaryFn(ref a) => a.hash(hasher),
+            BuiltinFunc(ref a) => a.hash(hasher),
             List(ref a) => a.hash(hasher),
             Mutable(ref a) => a.borrow().hash(hasher),
         }
@@ -100,8 +98,7 @@ impl PartialEq for Value {
                 &Func(ref param_b, ref e_b, ref scope_b, _),
             ) =>
                 param_a == param_b && e_a == e_b && scope_a == scope_b,
-            (&BuiltinUnaryFn(ref a), &BuiltinUnaryFn(ref b)) => a == b,
-            (&BuiltinBinaryFn(ref a), &BuiltinBinaryFn(ref b)) => a == b,
+            (&BuiltinFunc(ref a), &BuiltinFunc(ref b)) => a == b,
             (&List(ref a), &List(ref b)) => a == b,
             _ => false,
         }
@@ -144,10 +141,8 @@ impl Display for Value {
                 },
             Func(..) =>
                 write!(f, "($fn ...)"),
-            BuiltinUnaryFn(..) =>
-                write!(f, "($fn arg {{{{builtin}}}})"),
-            BuiltinBinaryFn(..) =>
-                write!(f, "($fn arg_0 arg_1 {{{{builtin}}}})"),
+            BuiltinFunc(..) =>
+                write!(f, "($fn {{{{builtin}}}})"),
             Mutable(ref inner) =>
                 write!(f, "mut.{}", &*inner.borrow()),
         }

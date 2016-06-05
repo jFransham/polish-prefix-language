@@ -444,7 +444,7 @@ pub fn eval(expression: &Expr, variables: Scope) -> Rc<Value> {
             out
         },
         Expr::UnaryFnCall(ref exp, ref arg) => {
-            let param = eval(arg, variables.clone());
+            let param = Args::Unary(eval(arg, variables.clone()));
 
             let mut scope = variables;
 
@@ -455,7 +455,7 @@ pub fn eval(expression: &Expr, variables: Scope) -> Rc<Value> {
                     Value::Func(ref pat, ref exp, ref captured, ref memo) =>
                         if let Some(val) = eval_fn(
                             (pat, exp, captured, memo),
-                            Args::Unary(param.clone())
+                            param.clone()
                         ) {
                             return val;
                         } else {
@@ -463,7 +463,7 @@ pub fn eval(expression: &Expr, variables: Scope) -> Rc<Value> {
                                 "Pattern not matched"
                             );
                         },
-                    Value::BuiltinUnaryFn(ref f) => return f(param.clone()),
+                    Value::BuiltinFunc(ref f) => return f(param),
                     _ => scope = scope.parent().expect(
                         "Pattern not matched"
                     ),
@@ -471,7 +471,7 @@ pub fn eval(expression: &Expr, variables: Scope) -> Rc<Value> {
             }
         },
         Expr::BinaryFnCall(ref exp, ref arg_0, ref arg_1) => {
-            let params = (
+            let params = Args::Binary(
                 eval(arg_0, variables.clone()),
                 eval(arg_1, variables.clone()),
             );
@@ -492,7 +492,7 @@ pub fn eval(expression: &Expr, variables: Scope) -> Rc<Value> {
                     Value::Func(ref pat, ref exp, ref captured, ref memo) =>
                         if let Some(val) = eval_fn(
                             (pat, exp, captured, memo),
-                            Args::Binary(params.0.clone(), params.1.clone())
+                            params.clone()
                         ) {
                             return val;
                         } else {
@@ -500,8 +500,8 @@ pub fn eval(expression: &Expr, variables: Scope) -> Rc<Value> {
                                 "Pattern not matched"
                             );
                         },
-                    Value::BuiltinBinaryFn(ref f) =>
-                        return f(params.0.clone(), params.1.clone()),
+                    Value::BuiltinFunc(ref f) =>
+                        return f(params.clone()),
                     _ => scope = scope.parent().expect(
                         "Pattern not matched"
                     ),
@@ -541,14 +541,18 @@ pub fn stdlib() -> Scope {
 
     macro_rules! make_is_fn {
         ($name:ident, $( $pattern:pat )|+) => {
-            fn $name(val: Rc<Value>) -> Rc<Value> {
-                $(
-                    if let $pattern = *val {
-                        return val_true!().into();
-                    }
-                )+
+            fn $name(args: Args) -> Rc<Value> {
+                if let Args::Unary(val) = args {
+                    $(
+                        if let $pattern = *val {
+                            return val_true!().into();
+                        }
+                    )+
 
-                val_false!().into()
+                    val_false!().into()
+                } else {
+                    unimplemented!()
+                }
             }
         }
     }
@@ -559,154 +563,174 @@ pub fn stdlib() -> Scope {
     make_is_fn!(is_hash, Hash(_));
     make_is_fn!(
         is_fn,
-        Func(..) | BuiltinUnaryFn(..) | BuiltinBinaryFn(..)
+        Func(..) | BuiltinFunc(..)
     );
 
-    fn print(val: Rc<Value>) -> Rc<Value> {
-        if let Str(ref s) = *val {
-            println!("{}", s)
+    fn print(args: Args) -> Rc<Value> {
+        if let Args::Unary(val) = args {
+            if let Str(ref s) = *val {
+                println!("{}", s)
+            } else {
+                println!("{}", val);
+            }
+
+            List(vec![]).into()
         } else {
-            println!("{}", val);
-        }
-
-        List(vec![]).into()
-    }
-
-    fn inner(mutable: Rc<Value>) -> Rc<Value> {
-        match mutable.as_ref() {
-            &Mutable(ref inner) => inner.borrow().clone(),
-            _ => unimplemented!(),
+            unimplemented!()
         }
     }
 
-    fn make_mutable(a: Rc<Value>) -> Rc<Value> {
+    fn inner(args: Args) -> Rc<Value> {
+        if let Args::Unary(mutable) = args {
+            match mutable.as_ref() {
+                &Mutable(ref inner) => inner.borrow().clone(),
+                _ => unimplemented!(),
+            }
+        } else {
+            unimplemented!()
+        }
+    }
+
+    fn make_mutable(args: Args) -> Rc<Value> {
         use std::cell::RefCell;
 
-        Mutable(RefCell::new(a)).into()
-    }
-
-    fn mutate(a: Rc<Value>, new_val: Rc<Value>) -> Rc<Value> {
-        match a.as_ref() {
-            &Mutable(ref inner) => {
-                *inner.borrow_mut() = new_val;
-
-                List(vec![]).into()
-            },
-            _ => unimplemented!(),
-        }
-    }
-
-    fn add(a: Rc<Value>, b: Rc<Value>) -> Rc<Value> {
-        match (a.as_ref(), b.as_ref()) {
-            (&Int(ref i_a), &Int(ref i_b)) => Int(i_a + i_b).into(),
-            _ => panic!("Cannot add {:?} and {:?}", a, b),
-        }
-    }
-
-    fn modulo(a: Rc<Value>, b: Rc<Value>) -> Rc<Value> {
-        match (a.as_ref(), b.as_ref()) {
-            (&Int(ref i_a), &Int(ref i_b)) => Int(i_a % i_b).into(),
-            _ => unimplemented!(),
-        }
-    }
-
-    fn mul(a: Rc<Value>, b: Rc<Value>) -> Rc<Value> {
-        match (a.as_ref(), b.as_ref()) {
-            (&Int(ref i_a), &Int(ref i_b)) => Int(i_a * i_b).into(),
-            _ => unimplemented!(),
-        }
-    }
-
-    fn div(a: Rc<Value>, b: Rc<Value>) -> Rc<Value> {
-        match (a.as_ref(), b.as_ref()) {
-            (&Int(ref i_a), &Int(ref i_b)) => Int(i_a / i_b).into(),
-            _ => unimplemented!(),
-        }
-    }
-
-    fn cons(a_rc: Rc<Value>, b_rc: Rc<Value>) -> Rc<Value> {
-        match (a_rc, b_rc.as_ref()) {
-            (ref a, &List(ref v)) => {
-                List(Some(a.clone()).into_iter().chain(
-                    v.iter().cloned()
-                ).collect()).into()
-            },
-            (ref a, _) => {
-                List(vec![a.clone(), b_rc.clone()]).into()
-            },
-        }
-    }
-
-    fn head(a: Rc<Value>) -> Rc<Value> {
-        match a.as_ref() {
-            &List(ref v) => {
-                v.iter().next().cloned().unwrap_or_else(
-                    || Rc::new(List(vec![]))
-                )
-            },
-            _ => unimplemented!(),
-        }
-    }
-
-    fn tail(a: Rc<Value>) -> Rc<Value> {
-        match a.as_ref() {
-            &List(ref l) => {
-                List(l[1..].iter().cloned().collect()).into()
-            },
-            _ => unimplemented!(),
-        }
-    }
-
-    fn eq(a: Rc<Value>, b: Rc<Value>) -> Rc<Value> {
-        if a == b {
-            val_true!().into()
+        if let Args::Unary(a) = args {
+            Mutable(RefCell::new(a)).into()
         } else {
-            val_false!().into()
+            unimplemented!()
         }
     }
 
-    fn less_or_eq(a: Rc<Value>, b: Rc<Value>) -> Rc<Value> {
-        if let (&Int(ref a_i), &Int(ref b_i)) = (a.as_ref(), b.as_ref()) {
-            if a_i <= b_i {
+    fn mutate(args: Args) -> Rc<Value> {
+        if let Args::Binary(a, new_val) = args {
+            match a.as_ref() {
+                &Mutable(ref inner) => {
+                    *inner.borrow_mut() = new_val;
+
+                    List(vec![]).into()
+                },
+                _ => unimplemented!(),
+            }
+        } else {
+            unimplemented!()
+        }
+    }
+
+    fn add(args: Args) -> Rc<Value> {
+        if let Args::Binary(a, b) = args {
+            match (a.as_ref(), b.as_ref()) {
+                (&Int(ref i_a), &Int(ref i_b)) => Int(i_a + i_b).into(),
+                _ => panic!("Cannot add {:?} and {:?}", a, b),
+            }
+        } else {
+            unimplemented!()
+        }
+    }
+
+    fn modulo(args: Args) -> Rc<Value> {
+        if let Args::Binary(a, b) = args {
+            match (a.as_ref(), b.as_ref()) {
+                (&Int(ref i_a), &Int(ref i_b)) => Int(i_a % i_b).into(),
+                _ => unimplemented!(),
+            }
+        } else {
+            unimplemented!()
+        }
+    }
+
+    fn mul(args: Args) -> Rc<Value> {
+        if let Args::Binary(a, b) = args {
+            match (a.as_ref(), b.as_ref()) {
+                (&Int(ref i_a), &Int(ref i_b)) => Int(i_a * i_b).into(),
+                _ => unimplemented!(),
+            }
+        } else {
+            unimplemented!()
+        }
+    }
+
+    fn div(args: Args) -> Rc<Value> {
+        if let Args::Binary(a, b) = args {
+            match (a.as_ref(), b.as_ref()) {
+                (&Int(ref i_a), &Int(ref i_b)) => Int(i_a / i_b).into(),
+                _ => unimplemented!(),
+            }
+        } else {
+            unimplemented!()
+        }
+    }
+
+    fn cons(args: Args) -> Rc<Value> {
+        if let Args::Binary(a_rc, b_rc) = args {
+            match (a_rc, b_rc.as_ref()) {
+                (ref a, &List(ref v)) => {
+                    List(Some(a.clone()).into_iter().chain(
+                        v.iter().cloned()
+                    ).collect()).into()
+                },
+                (ref a, _) => {
+                    List(vec![a.clone(), b_rc.clone()]).into()
+                },
+            }
+        } else {
+            unimplemented!()
+        }
+    }
+
+    fn eq(args: Args) -> Rc<Value> {
+        if let Args::Binary(a, b) = args {
+            if a == b {
                 val_true!().into()
             } else {
                 val_false!().into()
             }
         } else {
-            val_false!().into()
+            unimplemented!()
         }
     }
 
-    fn neg(a: Rc<Value>) -> Rc<Value> {
-        match a.as_ref() {
-            &Int(ref i_a) => Int(-i_a).into(),
-            _ => unimplemented!(),
+    fn less_or_eq(args: Args) -> Rc<Value> {
+        if let Args::Binary(a, b) = args {
+            if let (&Int(ref a_i), &Int(ref b_i)) = (a.as_ref(), b.as_ref()) {
+                if a_i <= b_i {
+                    val_true!().into()
+                } else {
+                    val_false!().into()
+                }
+            } else {
+                val_false!().into()
+            }
+        } else {
+            unimplemented!()
         }
     }
 
-    let mut out = Scope::new_with_var(
-        "print",
-        Value::BuiltinUnaryFn(print).into()
-    );
+    fn neg(args: Args) -> Rc<Value> {
+        if let Args::Unary(a) = args {
+            match a.as_ref() {
+                &Int(ref i_a) => Int(-i_a).into(),
+                _ => unimplemented!(),
+            }
+        } else {
+            unimplemented!()
+        }
+    }
 
-    out = out.with_var("=", Value::BuiltinBinaryFn(eq).into())
-        .with_var("<=", Value::BuiltinBinaryFn(less_or_eq).into())
-        .with_var("+", Value::BuiltinBinaryFn(add).into())
-        .with_var("*", Value::BuiltinBinaryFn(mul).into())
-        .with_var("/", Value::BuiltinBinaryFn(div).into())
-        .with_var("%", Value::BuiltinBinaryFn(modulo).into())
-        .with_var("cons", Value::BuiltinBinaryFn(cons).into())
-        .with_var("set!", Value::BuiltinBinaryFn(mutate).into())
-        .with_var("-", Value::BuiltinUnaryFn(neg).into())
-        .with_var("!", Value::BuiltinUnaryFn(inner).into())
-        .with_var("head", Value::BuiltinUnaryFn(head).into())
-        .with_var("tail", Value::BuiltinUnaryFn(tail).into())
-        .with_var("mut.", Value::BuiltinUnaryFn(make_mutable).into())
-        .with_var("str?", Value::BuiltinUnaryFn(is_str).into())
-        .with_var("list?", Value::BuiltinUnaryFn(is_list).into())
-        .with_var("int?", Value::BuiltinUnaryFn(is_int).into())
-        .with_var("hash?", Value::BuiltinUnaryFn(is_hash).into())
-        .with_var("fn?", Value::BuiltinUnaryFn(is_fn).into());
-
-    out
+    Scope::new_with_var("print", Value::BuiltinFunc(print).into())
+        .with_var("=", Value::BuiltinFunc(eq).into())
+        .with_var("<=", Value::BuiltinFunc(less_or_eq).into())
+        .with_var("+", Value::BuiltinFunc(add).into())
+        .with_var("*", Value::BuiltinFunc(mul).into())
+        .with_var("/", Value::BuiltinFunc(div).into())
+        .with_var("%", Value::BuiltinFunc(modulo).into())
+        .with_var("cons", Value::BuiltinFunc(cons).into())
+        .with_var("set!", Value::BuiltinFunc(mutate).into())
+        .with_var("-", Value::BuiltinFunc(neg).into())
+        .with_var("!", Value::BuiltinFunc(inner).into())
+        .with_var("mut.", Value::BuiltinFunc(make_mutable).into())
+        .with_var("str?", Value::BuiltinFunc(is_str).into())
+        .with_var("list?", Value::BuiltinFunc(is_list).into())
+        .with_var("int?", Value::BuiltinFunc(is_int).into())
+        .with_var("hash?", Value::BuiltinFunc(is_hash).into())
+        .with_var("fn?", Value::BuiltinFunc(is_fn).into())
 }
