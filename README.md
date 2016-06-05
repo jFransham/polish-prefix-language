@@ -33,3 +33,5 @@ Hello, world!
 ```
 
 and outputs -3
+
+For more examples of code, check out `test.pfx`.
