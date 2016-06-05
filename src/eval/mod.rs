@@ -572,10 +572,34 @@ pub fn stdlib() -> Scope {
         List(vec![]).into()
     }
 
+    fn inner(mutable: Rc<Value>) -> Rc<Value> {
+        match mutable.as_ref() {
+            &Mutable(ref inner) => inner.borrow().clone(),
+            _ => unimplemented!(),
+        }
+    }
+
+    fn make_mutable(a: Rc<Value>) -> Rc<Value> {
+        use std::cell::RefCell;
+
+        Mutable(RefCell::new(a)).into()
+    }
+
+    fn mutate(a: Rc<Value>, new_val: Rc<Value>) -> Rc<Value> {
+        match a.as_ref() {
+            &Mutable(ref inner) => {
+                *inner.borrow_mut() = new_val;
+
+                List(vec![]).into()
+            },
+            _ => unimplemented!(),
+        }
+    }
+
     fn add(a: Rc<Value>, b: Rc<Value>) -> Rc<Value> {
         match (a.as_ref(), b.as_ref()) {
             (&Int(ref i_a), &Int(ref i_b)) => Int(i_a + i_b).into(),
-            _ => unimplemented!(),
+            _ => panic!("Cannot add {:?} and {:?}", a, b),
         }
     }
 
@@ -672,9 +696,12 @@ pub fn stdlib() -> Scope {
         .with_var("/", Value::BuiltinBinaryFn(div).into())
         .with_var("%", Value::BuiltinBinaryFn(modulo).into())
         .with_var("cons", Value::BuiltinBinaryFn(cons).into())
+        .with_var("set!", Value::BuiltinBinaryFn(mutate).into())
         .with_var("-", Value::BuiltinUnaryFn(neg).into())
+        .with_var("!", Value::BuiltinUnaryFn(inner).into())
         .with_var("head", Value::BuiltinUnaryFn(head).into())
         .with_var("tail", Value::BuiltinUnaryFn(tail).into())
+        .with_var("mut.", Value::BuiltinUnaryFn(make_mutable).into())
         .with_var("str?", Value::BuiltinUnaryFn(is_str).into())
         .with_var("list?", Value::BuiltinUnaryFn(is_list).into())
         .with_var("int?", Value::BuiltinUnaryFn(is_int).into())

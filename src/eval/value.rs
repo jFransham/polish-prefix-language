@@ -59,6 +59,7 @@ pub enum Value {
     Int(BigInt),
     Str(String),
     Hash(u64),
+    Mutable(RefCell<Rc<Value>>),
     Func(Pattern, Rc<Expr>, MutableScope, Memo),
     BuiltinUnaryFn(fn(Rc<Value>) -> Rc<Value>),
     BuiltinBinaryFn(fn(Rc<Value>, Rc<Value>) -> Rc<Value>),
@@ -81,6 +82,7 @@ impl Hash for Value {
             BuiltinUnaryFn(ref a) => a.hash(hasher),
             BuiltinBinaryFn(ref a) => a.hash(hasher),
             List(ref a) => a.hash(hasher),
+            Mutable(ref a) => a.borrow().hash(hasher),
         }
     }
 }
@@ -146,6 +148,8 @@ impl Display for Value {
                 write!(f, "($fn arg {{{{builtin}}}})"),
             BuiltinBinaryFn(..) =>
                 write!(f, "($fn arg_0 arg_1 {{{{builtin}}}})"),
+            Mutable(ref inner) =>
+                write!(f, "mut.{}", &*inner.borrow()),
         }
     }
 }
